@@ -45,7 +45,12 @@ operation_mappings = [
         "🔀 UniversalMaskConverter (MagicAI)",
         "🔀 Universal Mask Converter (MagicAI)",
     ),
-    (ChromaKeyToMask, "🎨👹 ChromaKeyToMask (MagicAI)", "🎨👹 Chroma Key To Mask (MagicAI)"),
+    (
+        ChromaKeyToMask,
+        "🎨👹 ChromaKeyToMask (MagicAI)",
+        "🎨👹 Chroma Key To Mask (MagicAI)",
+    ),
+    (PasteByMask, "📋🔲 PasteByMask (MagicAI)", "📋🔲 Paste By Mask (MagicAI)"),
 ]
 
 # Define mappings as a list of category mappings
