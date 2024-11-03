@@ -17,15 +17,39 @@ if os.path.isdir(modules_path):
     sys.path.insert(0, modules_path)
 
 from .modules.logicai.nodes.Composite import *
+from .modules.logicai.nodes.Exec import *
 from .modules.logicai.nodes.IO import *
 from .modules.logicai.nodes.Operation import *
+from .modules.logicai.nodes.String import *
 from .modules.logicai.utils.mappings import *
-
 
 # Category Composite
 composite_mappings = [
     (AlphaMatte, "🎨 AlphaMatte (MagicAI)", "🎨 Alpha Matte (MagicAI)"),
 ]
+
+# Category Exec
+exec_mappings = [
+    (
+        PythonExecutionNode,
+        "🐍 PythonExecution (MagicAI)",
+        "🐍 Python Execution (MagicAI)",
+    ),
+]
+
+string_mappings = [
+    (
+        ExtractJSONFromTextNode,
+        "📄🔍 ExtractJSONFromTextNode (MagicAI)",
+        "📄🔍 Extract JSON From Text Node(MagicAI)",
+    ),
+    (
+        GetValueFromJsonString,
+        "📄🔑 GetValueFromJsonString (MagicAI)",
+        "📄🔑 Get Value From Json String (MagicAI)",
+    ),
+]
+
 
 # Category IO
 io_mappings = [
@@ -58,6 +82,8 @@ mappings = [
     composite_mappings,
     io_mappings,
     operation_mappings,
+    string_mappings,
+    exec_mappings,
 ]
 
 
