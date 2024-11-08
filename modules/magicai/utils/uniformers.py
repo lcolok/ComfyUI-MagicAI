@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from typing import Union, Tuple, Optional
-from logicai.utils.converters import novel_numpy2tensor, novel_tensor2numpy
+from magicai.utils.converters import novel_numpy2tensor, novel_tensor2numpy
 
 
 def get_shape_type(masks: Union[np.ndarray, torch.Tensor]) -> str:

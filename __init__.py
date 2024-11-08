@@ -16,12 +16,12 @@ modules_path = os.path.join(current_path, "modules")
 if os.path.isdir(modules_path):
     sys.path.insert(0, modules_path)
 
-from .modules.logicai.nodes.Composite import *
-from .modules.logicai.nodes.Exec import *
-from .modules.logicai.nodes.IO import *
-from .modules.logicai.nodes.Operation import *
-from .modules.logicai.nodes.String import *
-from .modules.logicai.utils.mappings import *
+from .modules.magicai.nodes.Composite import *
+from .modules.magicai.nodes.Exec import *
+from .modules.magicai.nodes.IO import *
+from .modules.magicai.nodes.Operation import *
+from .modules.magicai.nodes.String import *
+from .modules.magicai.utils.mappings import *
 
 # Category Composite
 composite_mappings = [
@@ -47,6 +47,16 @@ string_mappings = [
         GetValueFromJsonString,
         "📄🔑 GetValueFromJsonString (MagicAI)",
         "📄🔑 Get Value From Json String (MagicAI)",
+    ),
+    (
+        JinjaTemplateRenderer,
+        "📄 JinjaTemplateRenderer (MagicAI)",
+        "📄 Jinja Template Renderer (MagicAI)",
+    ),
+    (
+        JsonKeyValueInjector,
+        "📄🔑 JsonKeyValueInjector (MagicAI)",
+        "📄🔑 Json Key Value Injector (MagicAI)",
     ),
 ]
 

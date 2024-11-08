@@ -3,8 +3,8 @@ import math
 import torch.nn.functional as F
 from torch.nn.functional import interpolate
 from torchvision.ops import masks_to_boxes
-from logicai.utils.uniformers import ensure_nhwc_mask_auto
-from logicai.utils.converters import (
+from magicai.utils.uniformers import ensure_nhwc_mask_auto
+from magicai.utils.converters import (
     novel_mask2pil,
     novel_pil2tensor,
     novel_tensor2pil,

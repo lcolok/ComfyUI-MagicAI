@@ -1,7 +1,7 @@
 import torch
 import math
 from torchvision.ops import masks_to_boxes
-from logicai.utils.uniformers import ensure_nhwc_mask_auto
+from magicai.utils.uniformers import ensure_nhwc_mask_auto
 
 
 class MaskSizeCalculator:

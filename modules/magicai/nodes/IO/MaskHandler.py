@@ -2,7 +2,7 @@ import random
 
 import folder_paths  # type: ignore[import]
 import torch
-from logicai.utils.uniformers import ensure_nhwc_mask_auto
+from magicai.utils.uniformers import ensure_nhwc_mask_auto
 from nodes import SaveImage
 from rich import print
 from rich.style import Style

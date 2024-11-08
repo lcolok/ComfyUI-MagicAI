@@ -3,8 +3,8 @@ import numpy as np
 from PIL import Image
 import colorsys
 import re
-from logicai.utils.uniformers import ensure_nhwc_mask_auto
-from logicai.utils.converters import (
+from magicai.utils.uniformers import ensure_nhwc_mask_auto
+from magicai.utils.converters import (
     novel_pil2tensor,
     novel_tensor2pil,
 )

@@ -1,6 +1,6 @@
 import torch
 from PIL import Image, ImageOps
-from logicai.utils.converters import (
+from magicai.utils.converters import (
     novel_tensor2pil,
     novel_pil2tensor,
 )

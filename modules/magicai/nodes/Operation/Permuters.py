@@ -1,4 +1,4 @@
-from logicai.utils.uniformers import UniversalMaskConverterUtils
+from magicai.utils.uniformers import UniversalMaskConverterUtils
 import numpy as np
 import torch
 

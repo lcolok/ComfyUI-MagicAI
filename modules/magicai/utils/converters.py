@@ -33,11 +33,14 @@ def tensor2numpy(image):
 def novel_tensor2numpy(image):
     return image.clamp(0, 1).mul(255).byte().cpu().numpy().squeeze()
 
+
 def numpy2tensor(image):
     return torch.from_numpy(image.astype(np.float32) / 255.0)
 
+
 def novel_numpy2tensor(image):
     return torch.from_numpy(image).float().div(255).to(DEFAULT_DEVICE)
+
 
 # PIL to Tensor
 def pil2tensor(image):
