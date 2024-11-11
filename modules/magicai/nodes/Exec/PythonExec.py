@@ -4,31 +4,28 @@ import os
 import sys
 import json
 from json_repair import repair_json
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 
+@dataclass
 class ExecutionContext:
     """用于管理执行环境的上下文对象"""
 
-    def __init__(self, seed=0, json_data=None):
-        self._variables = {"seed": seed}
-        # 如果提供了JSON数据，将其添加到变量中
-        if json_data is not None:
-            if isinstance(json_data, dict):
-                self._variables.update(json_data)
-            else:
-                self._variables["json_data"] = json_data
+    seed: int = 0
+    variables: Dict[str, Any] = field(default_factory=dict)
 
-    def set(self, name, value):
-        """设置变量"""
-        self._variables[name] = value
+    def __post_init__(self):
+        """初始化后自动执行，确保seed存在于variables中"""
+        self.variables["seed"] = self.seed
 
-    def get(self, name, default=None):
-        """获取变量，支持默认值"""
-        return self._variables.get(name, default)
+    def get(self, name: str, default: Any = None) -> Any:
+        """获取变量值，支持默认值"""
+        return self.variables.get(name, default)
 
-    def get_all(self):
-        """获取所有变量"""
-        return self._variables
+    def set(self, name: str, value: Any) -> None:
+        """设置变量值"""
+        self.variables[name] = value
 
 
 class PythonExecutionNode:
@@ -48,29 +45,28 @@ class PythonExecutionNode:
     FUNCTION = "execute_python"
     CATEGORY = "utils"
 
-    def _repair_and_parse_json(self, json_string):
+    def _repair_and_parse_json(
+        self, json_string: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """尝试修复并解析JSON字符串"""
         if not json_string or not json_string.strip():
             return None
 
         try:
-            # 首先尝试直接解析
             return json.loads(json_string)
         except json.JSONDecodeError:
             try:
-                # 如果直接解析失败，使用json_repair修复
                 repaired_json = repair_json(json_string)
                 return json.loads(repaired_json)
             except Exception as e:
                 print(f"JSON修复和解析失败: {str(e)}")
                 return None
 
-    def _check_code_safety(self, code):
+    def _check_code_safety(self, code: str) -> tuple[bool, str]:
         """检查代码是否包含禁止的导入"""
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
-                # 检查 import 语句
                 if isinstance(node, ast.Import):
                     for name in node.names:
                         if name.name == "BizyAir.auth" or name.name.startswith(
@@ -80,7 +76,6 @@ class PythonExecutionNode:
                                 False,
                                 "Direct import of BizyAir.auth module is not allowed",
                             )
-                # 检查 from import 语句
                 elif isinstance(node, ast.ImportFrom):
                     if node.module and (
                         node.module == "BizyAir.auth"
@@ -91,45 +86,47 @@ class PythonExecutionNode:
             return False, f"Code analysis error: {str(e)}"
         return True, ""
 
-    def execute_python(self, python_code, seed, json_string=None):
-        # 使用textwrap.dedent()来修复缩进
+    def execute_python(
+        self, python_code: str, seed: int, json_string: Optional[str] = None
+    ) -> tuple[str]:
+        # 修复缩进
         dedented_code = textwrap.dedent(python_code)
 
-        # 首先进行安全检查
+        # 安全检查
         is_safe, message = self._check_code_safety(dedented_code)
         if not is_safe:
             return (f"Error: {message}",)
 
-        # 解析JSON数据（如果提供）
-        json_data = (
-            self._repair_and_parse_json(json_string)
-            if json_string is not None
-            else None
-        )
+        # 创建上下文
+        ctx = ExecutionContext(seed=seed)
 
-        # 创建执行上下文对象，并传入seed和JSON数据
-        ctx = ExecutionContext(seed=seed, json_data=json_data)
-
-        # 创建用于执行的命名空间
-        local_vars = {}
+        # 处理JSON数据
+        if json_string:
+            json_data = self._repair_and_parse_json(json_string)
+            if isinstance(json_data, dict):
+                ctx.variables.update(json_data)
+            elif json_data is not None:
+                ctx.set("json_data", json_data)
 
         try:
-            # 解析代码以检查语法错误
+            # 解析代码检查语法
             ast.parse(dedented_code)
 
-            # 设置全局命名空间
+            # 执行环境
             global_vars = {
                 "os": os,
                 "sys": sys,
                 "__file__": __file__,
                 "__name__": "__main__",
-                "ctx": ctx,  # 注入ctx对象
+                "ctx": ctx,
+                "json": json,
             }
+            local_vars = {}
 
             # 执行代码
             exec(dedented_code, global_vars, local_vars)
 
-            # 获取最后一个表达式的结果
+            # 获取最后的表达式结果
             tree = ast.parse(dedented_code)
             last_expr = next(
                 (node for node in reversed(tree.body) if isinstance(node, ast.Expr)),
