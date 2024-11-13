@@ -1,3 +1,4 @@
 rich
 pillow
 json_repair
+ftfy
