@@ -38,6 +38,7 @@ class PythonExecutionNode:
             },
             "optional": {
                 "json_string": ("STRING", {"multiline": True, "forceInput": True}),
+                "format_json": ("BOOLEAN", {"default": True}),  # 新增JSON格式化选项
             },
         }
 
@@ -86,8 +87,24 @@ class PythonExecutionNode:
             return False, f"Code analysis error: {str(e)}"
         return True, ""
 
+    def _format_result(self, result: Any, format_json: bool = True) -> str:
+        """格式化执行结果"""
+        if not format_json:
+            return str(result)
+
+        if isinstance(result, (dict, list)):
+            try:
+                return json.dumps(result, indent=2, ensure_ascii=False)
+            except:
+                return str(result)
+        return str(result)
+
     def execute_python(
-        self, python_code: str, seed: int, json_string: Optional[str] = None
+        self,
+        python_code: str,
+        seed: int,
+        json_string: Optional[str] = None,
+        format_json: bool = True,
     ) -> tuple[str]:
         # 修复缩进
         dedented_code = textwrap.dedent(python_code)
@@ -147,4 +164,6 @@ class PythonExecutionNode:
         except Exception as e:
             result = f"Error: {str(e)}"
 
-        return (str(result),)
+        # 格式化结果
+        formatted_result = self._format_result(result, format_json)
+        return (formatted_result,)
