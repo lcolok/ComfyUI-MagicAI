@@ -28,6 +28,37 @@ composite_mappings = [
     (AlphaMatte, "🎨 AlphaMatte (MagicAI)", "🎨 Alpha Matte (MagicAI)"),
 ]
 
+# Category Resize
+resize_mappings = [
+    (ResizeToMatchSize, "📏 ResizeToMatchSize (MagicAI)", "📏 Resize To Match Size (MagicAI)"),
+    (
+        ResizeToMatchSizeWithUpscaler,
+        "📏 ResizeToMatchSizeWithUpscaler (MagicAI)",
+        "📏 Resize To Match Size With Upscaler (MagicAI)",
+    ),
+    (MaskResizeToMatchSize, "📏 MaskResizeToMatchSize (MagicAI)", "📏 Mask Resize To Match Size (MagicAI)"),
+    (ResizeToExpectedSize, "📐 ResizeToExpectedSize (MagicAI)", "📐 Resize To Expected Size (MagicAI)"),
+    (
+        ResizeToExpectedSizeWithUpscaler,
+        "📐 ResizeToExpectedSizeWithUpscaler (MagicAI)",
+        "📐 Resize To Expected Size With Upscaler (MagicAI)",
+    ),
+    (
+        MaskResizeToExpectedSize,
+        "📐 MaskResizeToExpectedSize (MagicAI)",
+        "📐 Mask Resize To Expected Size (MagicAI)",
+    ),
+]
+
+# Category BizyAir
+bizyair_mappings = [
+    (
+        Tile_ExpectedImageSize_MagicAI,
+        "☁️ Tile_ExpectedImageSize_MagicAI",
+        "☁️ Tile Expected Image Size (MagicAI)",
+    ),
+]
+
 # Category Exec
 exec_mappings = [
     (
@@ -90,6 +121,8 @@ operation_mappings = [
 # Define mappings as a list of category mappings
 mappings = [
     composite_mappings,
+    resize_mappings,
+    bizyair_mappings,
     io_mappings,
     operation_mappings,
     string_mappings,
