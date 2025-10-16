@@ -355,17 +355,40 @@ class Tile_ExpectedImageSize_MagicAI(BaseBizyAirUpscaler):
         
         # 处理正方形分块选项
         if force_square_tiles == "true":
-            tile_aspect = (img_width / width_factor) / (img_height / height_factor)
-            if tile_aspect > 1.2:  # 分块太宽
-                if width_factor < 8:
-                    width_factor += 1
-                elif height_factor > min_split:
-                    height_factor -= 1
-            elif tile_aspect < 0.8:  # 分块太高
-                if height_factor < 8:
-                    height_factor += 1
-                elif width_factor > min_split:
-                    width_factor -= 1
+            # 迭代调整直到宽高比接近正方形，但限制最大迭代次数防止卡死
+            max_iterations = 10
+            iteration = 0
+
+            while iteration < max_iterations:
+                tile_aspect = (img_width / width_factor) / (img_height / height_factor)
+
+                # 如果已经足够接近正方形，退出
+                if 0.8 <= tile_aspect <= 1.2:
+                    break
+
+                # 调整因子
+                if tile_aspect > 1.2:  # 分块太宽
+                    if width_factor < 8:
+                        width_factor += 1
+                    elif height_factor > min_split:
+                        height_factor -= 1
+                    else:
+                        # 无法继续调整，退出循环
+                        break
+                elif tile_aspect < 0.8:  # 分块太高
+                    if height_factor < 8:
+                        height_factor += 1
+                    elif width_factor > min_split:
+                        width_factor -= 1
+                    else:
+                        # 无法继续调整，退出循环
+                        break
+
+                iteration += 1
+
+            # 打印调试信息
+            final_aspect = (img_width / width_factor) / (img_height / height_factor)
+            print(f"force_square_tiles: 迭代 {iteration} 次, width_factor={width_factor}, height_factor={height_factor}, tile_aspect={final_aspect:.2f}")
         
         # 调用共享处理逻辑
         return self.process_image_common(
