@@ -227,19 +227,25 @@ class BaseBizyAirUpscaler:
                 
                 upscaler = ImageUpscaleWithModel()
                 setattr(upscaler, "_assigned_id", "12345")
-                
+
+                total_tiles = len(tiles)
+                print(f"开始处理 {total_tiles} 个图像块...")
+
                 for i, tile in enumerate(tiles):
+                    print(f"正在处理第 {i+1}/{total_tiles} 个图像块...")
                     try:
                         if isinstance(upscale_model, BizyAirNodeIO):
                             result = upscaler.default_function(upscale_model=upscale_model, image=tile)
                         else:
                             result = upscaler.default_function(upscale_model=model_name, image=tile)
-                        
+
                         upscaled_tile = result[0] if isinstance(result, tuple) and len(result) > 0 else result
                         upscaled_tile = ensure_image_tensor(upscaled_tile)
                         upscaled_tile = ensure_nhwc_mask_auto(upscaled_tile)
                         upscaled_tiles.append(upscaled_tile)
+                        print(f"第 {i+1}/{total_tiles} 个图像块处理完成")
                     except Exception as e:
+                        print(f"第 {i+1}/{total_tiles} 个图像块处理失败: {e}")
                         upscaled_tiles.append(tile)
                 
                 if not upscaled_tiles:
@@ -249,8 +255,11 @@ class BaseBizyAirUpscaler:
                 scale_factor = 4
                 if upscaled_tiles[0].shape[1] > tile_positions[0][3]:
                     scale_factor = upscaled_tiles[0].shape[1] // tile_positions[0][3]
-                
-                return merge_upscaled_tiles(upscaled_tiles, tile_positions, image.shape, scale_factor)
+
+                print(f"所有图像块处理完成，开始合并 {len(upscaled_tiles)} 个图像块，缩放因子={scale_factor}...")
+                merged = merge_upscaled_tiles(upscaled_tiles, tile_positions, image.shape, scale_factor)
+                print(f"图像块合并完成")
+                return merged
             
             # 小图像直接处理
             else:
@@ -289,19 +298,25 @@ class BaseBizyAirUpscaler:
         # 进行放大处理
         if upscale_mode == "Force Upscale" or (upscale_mode == "AUTO" and need_upscale):
             try:
+                print(f"开始 BizyAir 上采样处理 (is_large_image={is_large_image}, width_factor={width_factor}, height_factor={height_factor})...")
                 if is_large_image:
                     upscaled_img = self.upscale_with_bizyair(upscale_model, image, width_factor, height_factor)
                 else:
                     upscaled_img = self.upscale_with_bizyair(upscale_model, image)
+                print(f"BizyAir 上采样完成")
             except Exception as e:
+                print(f"BizyAir 上采样失败: {e}")
                 upscaled_img = image
         
         # 调整到目标尺寸
         try:
+            print(f"开始调整图像大小到目标尺寸 ({target_width}x{target_height})...")
             upscaled_img = ensure_image_tensor(upscaled_img, fallback_image=image)
             resized_img = resize_to_expected_size(upscaled_img, target_width, target_height, strategy)
             resized_img = ensure_nhwc_mask_auto(resized_img)
+            print(f"图像大小调整完成")
         except Exception as e:
+            print(f"图像大小调整失败: {e}")
             resized_img = image
         
         # 计算最终分块尺寸
