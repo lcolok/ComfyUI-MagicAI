@@ -9,6 +9,8 @@ from bizyengine.bizyair_extras.nodes_upscale_model import ImageUpscaleWithModel
 import numpy as np
 import torch
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 # 辅助函数 - 基础工具
 def ensure_divisible_by_8(value):
@@ -107,19 +109,44 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
         print(f"[split_image_for_bizyair] 图像小于 {max_size}，无需分割")
         return [image], [(0, 0, width, height)]
 
+    # BizyAir API 最小tile尺寸要求
+    min_tile_size = 384
+
     if width_factor is not None and height_factor is not None:
         cols, rows = width_factor, height_factor
-        print(f"[split_image_for_bizyair] 使用提供的分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
+        print(f"[split_image_for_bizyair] 初始分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
+
+        # 计算初始tile尺寸
         tile_width = (width + cols - 1) // cols
         tile_height = (height + rows - 1) // rows
+        tile_width = ensure_divisible_by_8(tile_width)
+        tile_height = ensure_divisible_by_8(tile_height)
+
+        # 检查并调整过小的tile尺寸
+        if tile_width < min_tile_size or tile_height < min_tile_size:
+            print(f"[split_image_for_bizyair] ⚠️  计算的tile尺寸 {tile_width}x{tile_height} 小于最小要求 {min_tile_size}")
+
+            # 减少分块数量直到满足最小尺寸要求
+            while (tile_width < min_tile_size or tile_height < min_tile_size) and (cols > 1 or rows > 1):
+                if tile_width < min_tile_size and cols > 1:
+                    cols -= 1
+                if tile_height < min_tile_size and rows > 1:
+                    rows -= 1
+
+                tile_width = (width + cols - 1) // cols
+                tile_height = (height + rows - 1) // rows
+                tile_width = ensure_divisible_by_8(tile_width)
+                tile_height = ensure_divisible_by_8(tile_height)
+
+            print(f"[split_image_for_bizyair] 调整后分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
     else:
         cols = (width + max_size - 1) // max_size
         rows = (height + max_size - 1) // max_size
         print(f"[split_image_for_bizyair] 图像尺寸超过 {max_size}x{max_size}，将分割为 {rows}x{cols} 块")
-        tile_width = max_size
-        tile_height = max_size
+        tile_width = ensure_divisible_by_8(max_size)
+        tile_height = ensure_divisible_by_8(max_size)
 
-    print(f"[split_image_for_bizyair] 每个分块尺寸: {tile_width}x{tile_height}")
+    print(f"[split_image_for_bizyair] 最终分块尺寸: {tile_width}x{tile_height} (分块数: {cols}x{rows}={cols*rows}个)")
     tiles = []
     tile_positions = []
     
@@ -212,8 +239,50 @@ def calculate_tile_dimensions(res_width, res_height, width_factor, height_factor
 # 基类，包含共享处理逻辑
 class BaseBizyAirUpscaler:
     """BizyAir图像放大处理的基类"""
-    
-    def upscale_with_bizyair(self, upscale_model, image, width_factor=None, height_factor=None):
+
+    def _process_single_tile_with_retry(self, tile, tile_index, total_tiles, upscale_model, model_name):
+        """处理单个图像块，包含重试机制"""
+        max_retries = 3
+        retry_delay = 1.0
+
+        tile_shape = tile.shape
+        print(f"[并发处理] 正在处理第 {tile_index+1}/{total_tiles} 个图像块 (尺寸: {tile_shape[2]}x{tile_shape[1]})...")
+
+        upscaler = ImageUpscaleWithModel()
+        setattr(upscaler, "_assigned_id", "12345")
+
+        for retry in range(max_retries):
+            try:
+                if retry > 0:
+                    print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块 - 第 {retry+1}/{max_retries} 次重试...")
+                    time.sleep(retry_delay)
+
+                start_time = time.time()
+
+                if isinstance(upscale_model, BizyAirNodeIO):
+                    result = upscaler.default_function(upscale_model=upscale_model, image=tile)
+                else:
+                    result = upscaler.default_function(upscale_model=model_name, image=tile)
+
+                elapsed = time.time() - start_time
+
+                upscaled_tile = result[0] if isinstance(result, tuple) and len(result) > 0 else result
+                upscaled_tile = ensure_image_tensor(upscaled_tile)
+                upscaled_tile = ensure_nhwc_mask_auto(upscaled_tile)
+
+                print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块处理完成 (耗时: {elapsed:.2f}秒)")
+                return upscaled_tile
+
+            except Exception as e:
+                print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块第 {retry+1} 次尝试失败: {e}")
+                if retry == max_retries - 1:
+                    print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块所有重试失败，使用原始图块")
+                    traceback.print_exc()
+                    return tile
+
+        return tile
+
+    def upscale_with_bizyair(self, upscale_model, image, width_factor=None, height_factor=None, batch_size=3):
         """使用BizyAir进行图像上采样"""
         print(f"[upscale_with_bizyair] 开始上采样 (width_factor={width_factor}, height_factor={height_factor})")
         try:
@@ -228,44 +297,40 @@ class BaseBizyAirUpscaler:
 
             # 大图像分割处理
             if width > max_size or height > max_size:
-                print(f"[upscale_with_bizyair] 图像超过 {max_size}，使用分块处理")
+                print(f"[upscale_with_bizyair] 图像超过 {max_size}，使用分块并发处理")
                 tiles, tile_positions = split_image_for_bizyair(
                     image, max_size, width_factor, height_factor
                 )
-                upscaled_tiles = []
-                
-                upscaler = ImageUpscaleWithModel()
-                setattr(upscaler, "_assigned_id", "12345")
 
                 total_tiles = len(tiles)
-                print(f"开始处理 {total_tiles} 个图像块...")
+                print(f"开始并发处理 {total_tiles} 个图像块 (每批 {batch_size} 个)...")
 
-                for i, tile in enumerate(tiles):
-                    tile_shape = tile.shape
-                    print(f"[upscale_with_bizyair] 正在处理第 {i+1}/{total_tiles} 个图像块 (尺寸: {tile_shape[2]}x{tile_shape[1]})...")
-                    try:
-                        print(f"[upscale_with_bizyair] 调用 BizyAir API...")
-                        import time
-                        start_time = time.time()
+                batch_start_time = time.time()
 
-                        if isinstance(upscale_model, BizyAirNodeIO):
-                            result = upscaler.default_function(upscale_model=upscale_model, image=tile)
-                        else:
-                            result = upscaler.default_function(upscale_model=model_name, image=tile)
+                # 使用 ThreadPoolExecutor 进行并发处理
+                upscaled_tiles = [None] * total_tiles  # 预分配列表保持顺序
 
-                        elapsed = time.time() - start_time
-                        print(f"[upscale_with_bizyair] BizyAir API 调用完成 (耗时: {elapsed:.2f}秒)")
+                with ThreadPoolExecutor(max_workers=batch_size) as executor:
+                    # 提交所有任务
+                    future_to_index = {
+                        executor.submit(
+                            self._process_single_tile_with_retry,
+                            tile, i, total_tiles, upscale_model, model_name
+                        ): i
+                        for i, tile in enumerate(tiles)
+                    }
 
-                        upscaled_tile = result[0] if isinstance(result, tuple) and len(result) > 0 else result
-                        upscaled_tile = ensure_image_tensor(upscaled_tile)
-                        upscaled_tile = ensure_nhwc_mask_auto(upscaled_tile)
-                        upscaled_tiles.append(upscaled_tile)
-                        print(f"[upscale_with_bizyair] 第 {i+1}/{total_tiles} 个图像块处理完成")
-                    except Exception as e:
-                        print(f"[upscale_with_bizyair] 第 {i+1}/{total_tiles} 个图像块处理失败: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        upscaled_tiles.append(tile)
+                    # 收集结果（保持顺序）
+                    for future in as_completed(future_to_index):
+                        index = future_to_index[future]
+                        try:
+                            upscaled_tiles[index] = future.result()
+                        except Exception as e:
+                            print(f"[并发处理] 第 {index+1} 块处理异常: {e}")
+                            upscaled_tiles[index] = tiles[index]  # 使用原始tile
+
+                batch_elapsed = time.time() - batch_start_time
+                print(f"所有图像块并发处理完成 (总耗时: {batch_elapsed:.2f}秒, 平均: {batch_elapsed/total_tiles:.2f}秒/块)...")
                 
                 if not upscaled_tiles:
                     return image
@@ -283,24 +348,7 @@ class BaseBizyAirUpscaler:
             # 小图像直接处理
             else:
                 print(f"[upscale_with_bizyair] 图像小于 {max_size}，直接处理")
-                upscaler = ImageUpscaleWithModel()
-                setattr(upscaler, "_assigned_id", "12345")
-
-                print(f"[upscale_with_bizyair] 调用 BizyAir API...")
-                import time
-                start_time = time.time()
-
-                if isinstance(upscale_model, BizyAirNodeIO):
-                    result = upscaler.default_function(upscale_model=upscale_model, image=image)
-                else:
-                    result = upscaler.default_function(upscale_model=model_name, image=image)
-
-                elapsed = time.time() - start_time
-                print(f"[upscale_with_bizyair] BizyAir API 调用完成 (耗时: {elapsed:.2f}秒)")
-
-                upscaled_img = result[0] if isinstance(result, tuple) and len(result) > 0 else result
-                upscaled_img = ensure_image_tensor(upscaled_img)
-                upscaled_img = ensure_nhwc_mask_auto(upscaled_img)
+                upscaled_img = self._process_single_tile_with_retry(image, 0, 1, upscale_model, model_name)
                 print(f"[upscale_with_bizyair] 上采样完成，返回结果")
                 return upscaled_img
 
@@ -337,9 +385,9 @@ class BaseBizyAirUpscaler:
             try:
                 print(f"开始 BizyAir 上采样处理 (is_large_image={is_large_image}, width_factor={width_factor}, height_factor={height_factor})...")
                 if is_large_image:
-                    upscaled_img = self.upscale_with_bizyair(upscale_model, image, width_factor, height_factor)
+                    upscaled_img = self.upscale_with_bizyair(upscale_model, image, width_factor, height_factor, batch_size=3)
                 else:
-                    upscaled_img = self.upscale_with_bizyair(upscale_model, image)
+                    upscaled_img = self.upscale_with_bizyair(upscale_model, image, batch_size=3)
                 print(f"BizyAir 上采样完成")
             except Exception as e:
                 print(f"BizyAir 上采样失败: {e}")
