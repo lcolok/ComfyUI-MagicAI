@@ -98,24 +98,28 @@ def ensure_image_tensor(image, fallback_image=None):
 # 图像分割与合并函数
 def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_factor=None):
     """将大图像分割成小块"""
+    print(f"[split_image_for_bizyair] 开始分割图像...")
     image = ensure_nhwc_mask_auto(image)
     _, height, width, channels = image.shape
-    
+    print(f"[split_image_for_bizyair] 图像尺寸: {width}x{height}, channels={channels}")
+
     if width <= max_size and height <= max_size:
+        print(f"[split_image_for_bizyair] 图像小于 {max_size}，无需分割")
         return [image], [(0, 0, width, height)]
-    
+
     if width_factor is not None and height_factor is not None:
         cols, rows = width_factor, height_factor
-        print(f"使用提供的分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
+        print(f"[split_image_for_bizyair] 使用提供的分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
         tile_width = (width + cols - 1) // cols
         tile_height = (height + rows - 1) // rows
     else:
         cols = (width + max_size - 1) // max_size
         rows = (height + max_size - 1) // max_size
-        print(f"图像尺寸超过 {max_size}x{max_size}，将分割为 {rows}x{cols} 块")
+        print(f"[split_image_for_bizyair] 图像尺寸超过 {max_size}x{max_size}，将分割为 {rows}x{cols} 块")
         tile_width = max_size
         tile_height = max_size
-    
+
+    print(f"[split_image_for_bizyair] 每个分块尺寸: {tile_width}x{tile_height}")
     tiles = []
     tile_positions = []
     
@@ -134,11 +138,12 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
                 tiles.append(tile)
                 tile_positions.append((start_x, start_y, end_x - start_x, end_y - start_y))
     except Exception as e:
-        print(f"分割图像时出错: {e}")
+        print(f"[split_image_for_bizyair] 分割图像时出错: {e}")
         if len(tiles) == 0:
             tiles = [image]
             tile_positions = [(0, 0, width, height)]
-    
+
+    print(f"[split_image_for_bizyair] 分割完成，共 {len(tiles)} 个图像块")
     return tiles, tile_positions
 
 def merge_upscaled_tiles(tiles, tile_positions, original_shape, scale_factor=4):
@@ -210,16 +215,20 @@ class BaseBizyAirUpscaler:
     
     def upscale_with_bizyair(self, upscale_model, image, width_factor=None, height_factor=None):
         """使用BizyAir进行图像上采样"""
+        print(f"[upscale_with_bizyair] 开始上采样 (width_factor={width_factor}, height_factor={height_factor})")
         try:
             model_name = get_model_name(upscale_model)
+            print(f"[upscale_with_bizyair] 模型名称: {model_name}")
             image = ensure_image_tensor(image)
             image = ensure_nhwc_mask_auto(image)
-            
+
             _, height, width, _ = image.shape
+            print(f"[upscale_with_bizyair] 输入图像尺寸: {width}x{height}")
             max_size = 1280
-            
+
             # 大图像分割处理
             if width > max_size or height > max_size:
+                print(f"[upscale_with_bizyair] 图像超过 {max_size}，使用分块处理")
                 tiles, tile_positions = split_image_for_bizyair(
                     image, max_size, width_factor, height_factor
                 )
@@ -232,20 +241,30 @@ class BaseBizyAirUpscaler:
                 print(f"开始处理 {total_tiles} 个图像块...")
 
                 for i, tile in enumerate(tiles):
-                    print(f"正在处理第 {i+1}/{total_tiles} 个图像块...")
+                    tile_shape = tile.shape
+                    print(f"[upscale_with_bizyair] 正在处理第 {i+1}/{total_tiles} 个图像块 (尺寸: {tile_shape[2]}x{tile_shape[1]})...")
                     try:
+                        print(f"[upscale_with_bizyair] 调用 BizyAir API...")
+                        import time
+                        start_time = time.time()
+
                         if isinstance(upscale_model, BizyAirNodeIO):
                             result = upscaler.default_function(upscale_model=upscale_model, image=tile)
                         else:
                             result = upscaler.default_function(upscale_model=model_name, image=tile)
 
+                        elapsed = time.time() - start_time
+                        print(f"[upscale_with_bizyair] BizyAir API 调用完成 (耗时: {elapsed:.2f}秒)")
+
                         upscaled_tile = result[0] if isinstance(result, tuple) and len(result) > 0 else result
                         upscaled_tile = ensure_image_tensor(upscaled_tile)
                         upscaled_tile = ensure_nhwc_mask_auto(upscaled_tile)
                         upscaled_tiles.append(upscaled_tile)
-                        print(f"第 {i+1}/{total_tiles} 个图像块处理完成")
+                        print(f"[upscale_with_bizyair] 第 {i+1}/{total_tiles} 个图像块处理完成")
                     except Exception as e:
-                        print(f"第 {i+1}/{total_tiles} 个图像块处理失败: {e}")
+                        print(f"[upscale_with_bizyair] 第 {i+1}/{total_tiles} 个图像块处理失败: {e}")
+                        import traceback
+                        traceback.print_exc()
                         upscaled_tiles.append(tile)
                 
                 if not upscaled_tiles:
@@ -263,32 +282,50 @@ class BaseBizyAirUpscaler:
             
             # 小图像直接处理
             else:
+                print(f"[upscale_with_bizyair] 图像小于 {max_size}，直接处理")
                 upscaler = ImageUpscaleWithModel()
                 setattr(upscaler, "_assigned_id", "12345")
-                
+
+                print(f"[upscale_with_bizyair] 调用 BizyAir API...")
+                import time
+                start_time = time.time()
+
                 if isinstance(upscale_model, BizyAirNodeIO):
                     result = upscaler.default_function(upscale_model=upscale_model, image=image)
                 else:
                     result = upscaler.default_function(upscale_model=model_name, image=image)
-                
+
+                elapsed = time.time() - start_time
+                print(f"[upscale_with_bizyair] BizyAir API 调用完成 (耗时: {elapsed:.2f}秒)")
+
                 upscaled_img = result[0] if isinstance(result, tuple) and len(result) > 0 else result
                 upscaled_img = ensure_image_tensor(upscaled_img)
                 upscaled_img = ensure_nhwc_mask_auto(upscaled_img)
+                print(f"[upscale_with_bizyair] 上采样完成，返回结果")
                 return upscaled_img
-                
+
         except Exception as e:
+            print(f"[upscale_with_bizyair] 上采样过程出错: {e}")
+            import traceback
+            traceback.print_exc()
             return image
 
-    def process_image_common(self, image, exp_width, exp_height, width_factor, height_factor, 
+    def process_image_common(self, image, exp_width, exp_height, width_factor, height_factor,
                             overlap_rate, upscale_model, upscale_mode, strategy):
         """通用图像处理逻辑"""
+        print(f"\n[process_image_common] 开始通用处理流程")
+        print(f"[process_image_common] 分块因子: width_factor={width_factor}, height_factor={height_factor}")
+
         image = ensure_nhwc_mask_auto(image)
         _, img_height, img_width, _ = image.shape
-        
+        print(f"[process_image_common] 输入图像尺寸: {img_width}x{img_height}")
+
         # 计算目标尺寸
+        print(f"[process_image_common] 计算目标尺寸...")
         target_width, target_height, overlap_width_pixels, overlap_height_pixels = calculate_dimensions(
             exp_width, exp_height, width_factor, height_factor, overlap_rate
         )
+        print(f"[process_image_common] 目标尺寸: {target_width}x{target_height}")
         
         # 决定是否需要放大
         need_upscale = img_width * img_height < target_width * target_height
@@ -321,15 +358,20 @@ class BaseBizyAirUpscaler:
         
         # 计算最终分块尺寸
         _, res_height, res_width, _ = resized_img.shape
+        print(f"[process_image_common] 最终调整后图像尺寸: {res_width}x{res_height}")
+
         tile_width, tile_height = calculate_tile_dimensions(
-            res_width, res_height, width_factor, height_factor, 
+            res_width, res_height, width_factor, height_factor,
             overlap_width_pixels, overlap_height_pixels
         )
-        
+        print(f"[process_image_common] 分块尺寸: {tile_width}x{tile_height}")
+
         # 计算分块宽高比
         tile_aspect_ratio = tile_width / tile_height
-        
-        return (upscaled_img, resized_img, target_width, target_height, tile_width, 
+        print(f"[process_image_common] 分块宽高比: {tile_aspect_ratio:.2f}")
+
+        print(f"[process_image_common] 处理完成，准备返回结果\n")
+        return (upscaled_img, resized_img, target_width, target_height, tile_width,
                 tile_height, width_factor, height_factor, tile_aspect_ratio)
 
 # 自动计算分块因子的节点
@@ -359,14 +401,24 @@ class Tile_ExpectedImageSize_MagicAI(BaseBizyAirUpscaler):
     FUNCTION = "process_image"
     DESCRIPTION = "使用BizyAir云端资源根据期望的分块大小进行图像放大处理，自动计算最优分块因子 (MagicAI)"
 
-    def process_image(self, image, exp_width, exp_height, min_split, overlap_rate, 
+    def process_image(self, image, exp_width, exp_height, min_split, overlap_rate,
                      upscale_model, upscale_mode, strategy, force_square_tiles):
         """处理图像，自动计算最优分块数量"""
+        print(f"\n{'='*60}")
+        print(f"[Tile_ExpectedImageSize_MagicAI] 开始处理图像")
+        print(f"参数: exp_width={exp_width}, exp_height={exp_height}, min_split={min_split}")
+        print(f"      overlap_rate={overlap_rate}, upscale_mode={upscale_mode}")
+        print(f"      strategy={strategy}, force_square_tiles={force_square_tiles}")
+        print(f"{'='*60}\n")
+
         image = ensure_nhwc_mask_auto(image)
         _, img_height, img_width, _ = image.shape
-        
+        print(f"[process_image] 输入图像尺寸: {img_width}x{img_height}")
+
         # 计算最佳分块因子
+        print(f"[process_image] 计算最佳分块因子...")
         width_factor, height_factor = calculate_optimal_factors(img_width, img_height, min_split)
+        print(f"[process_image] 初始分块因子: width_factor={width_factor}, height_factor={height_factor}")
         
         # 处理正方形分块选项
         if force_square_tiles == "true":
@@ -403,10 +455,13 @@ class Tile_ExpectedImageSize_MagicAI(BaseBizyAirUpscaler):
 
             # 打印调试信息
             final_aspect = (img_width / width_factor) / (img_height / height_factor)
-            print(f"force_square_tiles: 迭代 {iteration} 次, width_factor={width_factor}, height_factor={height_factor}, tile_aspect={final_aspect:.2f}")
-        
+            print(f"[process_image] force_square_tiles: 迭代 {iteration} 次, width_factor={width_factor}, height_factor={height_factor}, tile_aspect={final_aspect:.2f}")
+
         # 调用共享处理逻辑
-        return self.process_image_common(
+        print(f"[process_image] 调用共享处理逻辑...")
+        result = self.process_image_common(
             image, exp_width, exp_height, width_factor, height_factor,
             overlap_rate, upscale_model, upscale_mode, strategy
         )
+        print(f"[process_image] 节点处理完成！\n{'='*60}\n")
+        return result
