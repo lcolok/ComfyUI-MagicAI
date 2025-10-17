@@ -22,7 +22,7 @@ def calculate_optimal_factors(width, height, min_factor):
     aspect_ratio = width / height
     width_factor = min_factor
     height_factor = min_factor
-    
+
     if aspect_ratio > 1:  # 宽图
         if 1.4 <= aspect_ratio <= 1.6:
             width_factor, height_factor = max(3, min_factor), max(2, min_factor)
@@ -37,13 +37,64 @@ def calculate_optimal_factors(width, height, min_factor):
                 width_factor, height_factor = max(2, min_factor), max(3, min_factor)
             else:
                 width_factor, height_factor = max(2, min_factor), max(4, min_factor)
-    
+
     # 限制过度切分
     max_allowed = min_factor + 2
     width_factor = min(width_factor, max_allowed)
     height_factor = min(height_factor, max_allowed)
-    
+
     return width_factor, height_factor
+
+def calculate_square_tile_factors(width, height):
+    """
+    计算正方形分块的最优方案
+    目标: 用最少数量的正方形tile完全覆盖图像
+
+    返回: (width_factor, height_factor, tile_size)
+    """
+    min_tile_size = 384  # BizyAir API 最小要求
+
+    # 从最大可能的正方形尺寸开始
+    # 理想的正方形边长应该基于较小的维度
+    shorter_side = min(width, height)
+
+    # 尝试不同的正方形尺寸，找到最优方案
+    best_tile_size = None
+    min_total_tiles = float('inf')
+    best_cols = 0
+    best_rows = 0
+
+    # 从较大的tile尺寸开始尝试（减少分块数）
+    # 最大tile尺寸不超过 shorter_side，最小不低于 384
+    max_tile_size = ensure_divisible_by_8(shorter_side)
+
+    for tile_size in range(max_tile_size, min_tile_size - 1, -8):  # 每次减少8
+        if tile_size < min_tile_size:
+            break
+
+        # 计算需要的分块数
+        cols = (width + tile_size - 1) // tile_size
+        rows = (height + tile_size - 1) // tile_size
+        total_tiles = cols * rows
+
+        # 找到最少分块数的方案
+        if total_tiles < min_total_tiles:
+            min_total_tiles = total_tiles
+            best_tile_size = tile_size
+            best_cols = cols
+            best_rows = rows
+
+        # 如果已经找到很少的分块数，可以提前退出
+        if total_tiles <= 4:
+            break
+
+    # 如果没有找到合适的方案，使用最小尺寸
+    if best_tile_size is None:
+        best_tile_size = min_tile_size
+        best_cols = (width + min_tile_size - 1) // min_tile_size
+        best_rows = (height + min_tile_size - 1) // min_tile_size
+
+    return best_cols, best_rows, best_tile_size
 
 def get_model_name(upscale_model):
     """从upscale_model对象中获取模型名称"""
@@ -464,46 +515,21 @@ class Tile_ExpectedImageSize_MagicAI(BaseBizyAirUpscaler):
         print(f"[process_image] 输入图像尺寸: {img_width}x{img_height}")
 
         # 计算最佳分块因子
-        print(f"[process_image] 计算最佳分块因子...")
-        width_factor, height_factor = calculate_optimal_factors(img_width, img_height, min_split)
-        print(f"[process_image] 初始分块因子: width_factor={width_factor}, height_factor={height_factor}")
-        
-        # 处理正方形分块选项
         if force_square_tiles == "true":
-            # 迭代调整直到宽高比接近正方形，但限制最大迭代次数防止卡死
-            max_iterations = 10
-            iteration = 0
-
-            while iteration < max_iterations:
-                tile_aspect = (img_width / width_factor) / (img_height / height_factor)
-
-                # 如果已经足够接近正方形，退出
-                if 0.8 <= tile_aspect <= 1.2:
-                    break
-
-                # 调整因子
-                if tile_aspect > 1.2:  # 分块太宽
-                    if width_factor < 8:
-                        width_factor += 1
-                    elif height_factor > min_split:
-                        height_factor -= 1
-                    else:
-                        # 无法继续调整，退出循环
-                        break
-                elif tile_aspect < 0.8:  # 分块太高
-                    if height_factor < 8:
-                        height_factor += 1
-                    elif width_factor > min_split:
-                        width_factor -= 1
-                    else:
-                        # 无法继续调整，退出循环
-                        break
-
-                iteration += 1
-
-            # 打印调试信息
-            final_aspect = (img_width / width_factor) / (img_height / height_factor)
-            print(f"[process_image] force_square_tiles: 迭代 {iteration} 次, width_factor={width_factor}, height_factor={height_factor}, tile_aspect={final_aspect:.2f}")
+            print(f"[process_image] 使用正方形分块模式 (忽略 min_split 参数)")
+            # 使用新的正方形分块算法
+            width_factor, height_factor, optimal_tile_size = calculate_square_tile_factors(img_width, img_height)
+            actual_tile_width = (img_width + width_factor - 1) // width_factor
+            actual_tile_height = (img_height + height_factor - 1) // height_factor
+            print(f"[process_image] 正方形分块方案: {width_factor}x{height_factor}={width_factor*height_factor}块")
+            print(f"[process_image] 最优tile尺寸: {optimal_tile_size}x{optimal_tile_size} (实际: {actual_tile_width}x{actual_tile_height})")
+        else:
+            print(f"[process_image] 计算最佳分块因子 (基于宽高比)...")
+            width_factor, height_factor = calculate_optimal_factors(img_width, img_height, min_split)
+            tile_width_estimate = img_width / width_factor
+            tile_height_estimate = img_height / height_factor
+            print(f"[process_image] 初始分块因子: {width_factor}x{height_factor}={width_factor*height_factor}块")
+            print(f"[process_image] 预估tile尺寸: {tile_width_estimate:.0f}x{tile_height_estimate:.0f}")
 
         # 调用共享处理逻辑
         print(f"[process_image] 调用共享处理逻辑...")
