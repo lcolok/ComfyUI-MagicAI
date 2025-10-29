@@ -303,7 +303,9 @@ class BaseBizyAirUpscaler:
             try:
                 # 每次重试都重新创建 upscaler 对象，避免状态污染
                 upscaler = ImageUpscaleWithModel()
-                setattr(upscaler, "_assigned_id", f"tile_{tile_index}_{retry}")
+                # BizyAir 要求 _assigned_id 必须是可以转换为整数的字符串
+                node_id = str(tile_index * 1000 + retry)
+                setattr(upscaler, "_assigned_id", node_id)
 
                 if retry > 0:
                     # 递增延迟：2秒, 3秒, 4秒, 5秒, 6秒
