@@ -158,7 +158,8 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
 
     if width <= max_size and height <= max_size:
         print(f"[split_image_for_bizyair] 图像小于 {max_size}，无需分割")
-        return [image], [(0, 0, width, height)]
+        original_shape = (1, height, width, channels)
+        return [image], [(0, 0, width, height)], original_shape
 
     # BizyAir API 最小tile尺寸要求
     min_tile_size = 384
@@ -280,7 +281,9 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
             tile_positions = [(0, 0, width, height)]
 
     print(f"[split_image_for_bizyair] 分割完成，共 {len(tiles)} 个图像块")
-    return tiles, tile_positions
+    # 返回填充后的图像尺寸，用于后续合并
+    padded_shape = (1, height, width, channels)
+    return tiles, tile_positions, padded_shape
 
 def merge_upscaled_tiles(tiles, tile_positions, original_shape, scale_factor=4):
     """合并上采样后的图像块"""
@@ -437,7 +440,7 @@ class BaseBizyAirUpscaler:
             # 大图像分割处理
             if width > max_size or height > max_size:
                 print(f"[upscale_with_bizyair] 图像超过 {max_size}，使用分块并发处理")
-                tiles, tile_positions = split_image_for_bizyair(
+                tiles, tile_positions, padded_shape = split_image_for_bizyair(
                     image, max_size, width_factor, height_factor
                 )
 
@@ -493,7 +496,8 @@ class BaseBizyAirUpscaler:
                     scale_factor = upscaled_tiles[0].shape[1] // tile_positions[0][3]
 
                 print(f"所有图像块处理完成，开始合并 {len(upscaled_tiles)} 个图像块，缩放因子={scale_factor}...")
-                merged = merge_upscaled_tiles(upscaled_tiles, tile_positions, image.shape, scale_factor)
+                # 使用填充后的图像尺寸进行合并，而不是原始图像尺寸
+                merged = merge_upscaled_tiles(upscaled_tiles, tile_positions, padded_shape, scale_factor)
                 print(f"图像块合并完成")
                 return merged
             
