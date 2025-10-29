@@ -204,14 +204,26 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
     try:
         for r in range(rows):
             for c in range(cols):
-                start_y = r * tile_height
-                start_x = c * tile_width
-                end_y = min(start_y + tile_height, height)
-                end_x = min(start_x + tile_width, width)
-                
+                # 最后一列/行需要延伸到图像边界
+                if c == cols - 1:
+                    # 最后一列：从边界往回推 tile_width
+                    end_x = width
+                    start_x = max(0, width - tile_width)
+                else:
+                    start_x = c * tile_width
+                    end_x = min(start_x + tile_width, width)
+
+                if r == rows - 1:
+                    # 最后一行：从边界往回推 tile_height
+                    end_y = height
+                    start_y = max(0, height - tile_height)
+                else:
+                    start_y = r * tile_height
+                    end_y = min(start_y + tile_height, height)
+
                 if end_y <= start_y or end_x <= start_x:
                     continue
-                
+
                 tile = image[:, start_y:end_y, start_x:end_x, :]
                 tiles.append(tile)
                 tile_positions.append((start_x, start_y, end_x - start_x, end_y - start_y))
