@@ -348,8 +348,9 @@ class BaseBizyAirUpscaler:
                             mode='bicubic',
                             align_corners=False
                         )
-                        # 转回 NHWC
+                        # 转回 NHWC 并裁剪到 [0, 1] 范围（bicubic可能产生超出范围的值）
                         upscaled_tile = upscaled_nchw.permute(0, 2, 3, 1)
+                        upscaled_tile = torch.clamp(upscaled_tile, 0.0, 1.0)
                         print(f"[并发处理] 降级放大完成: {tile_shape[2]}x{tile_shape[1]} → {target_w}x{target_h}")
                         return upscaled_tile
                     except Exception as fallback_error:
@@ -416,7 +417,9 @@ class BaseBizyAirUpscaler:
                             target_h = tile.shape[1] * scale_factor
                             target_w = tile.shape[2] * scale_factor
                             upscaled_nchw = F.interpolate(tile_nchw, size=(target_h, target_w), mode='bicubic', align_corners=False)
-                            upscaled_tiles[index] = upscaled_nchw.permute(0, 2, 3, 1)
+                            # 裁剪到 [0, 1] 范围避免黑图
+                            upscaled_tile = upscaled_nchw.permute(0, 2, 3, 1)
+                            upscaled_tiles[index] = torch.clamp(upscaled_tile, 0.0, 1.0)
 
                 batch_elapsed = time.time() - batch_start_time
                 print(f"所有图像块并发处理完成 (总耗时: {batch_elapsed:.2f}秒, 平均: {batch_elapsed/total_tiles:.2f}秒/块)...")
