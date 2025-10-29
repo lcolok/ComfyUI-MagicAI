@@ -154,7 +154,7 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
     print(f"[split_image_for_bizyair] 开始分割图像...")
     image = ensure_nhwc_mask_auto(image)
     _, height, width, channels = image.shape
-    print(f"[split_image_for_bizyair] 图像尺寸: {width}x{height}, channels={channels}")
+    print(f"[split_image_for_bizyair] 原始图像尺寸: {width}x{height}, channels={channels}")
 
     if width <= max_size and height <= max_size:
         print(f"[split_image_for_bizyair] 图像小于 {max_size}，无需分割")
@@ -167,11 +167,37 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
         cols, rows = width_factor, height_factor
         print(f"[split_image_for_bizyair] 初始分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
 
-        # 计算初始tile尺寸
-        tile_width = (width + cols - 1) // cols
-        tile_height = (height + rows - 1) // rows
-        tile_width = ensure_divisible_by_8(tile_width)
-        tile_height = ensure_divisible_by_8(tile_height)
+        # 关键修复: 确保图像尺寸能被 (cols * 8) 和 (rows * 8) 整除
+        # 这样分割后的每个tile都能保证是8的倍数，且完全覆盖图像
+        lcm_width = cols * 8
+        lcm_height = rows * 8
+
+        padded_width = ((width + lcm_width - 1) // lcm_width) * lcm_width
+        padded_height = ((height + lcm_height - 1) // lcm_height) * lcm_height
+
+        if padded_width != width or padded_height != height:
+            print(f"[split_image_for_bizyair] 填充图像以确保完全覆盖: {width}x{height} -> {padded_width}x{padded_height}")
+            # 使用反射填充以避免黑边
+            pad_right = padded_width - width
+            pad_bottom = padded_height - height
+
+            import torch.nn.functional as F
+            # image shape: (batch, height, width, channels) -> (batch, channels, height, width)
+            image_nchw = image.permute(0, 3, 1, 2)
+            # F.pad expects (left, right, top, bottom) for 2D padding
+            padded_nchw = F.pad(image_nchw, (0, pad_right, 0, pad_bottom), mode='reflect')
+            # Convert back to NHWC
+            image = padded_nchw.permute(0, 2, 3, 1)
+            width, height = padded_width, padded_height
+            print(f"[split_image_for_bizyair] 填充完成，新尺寸: {width}x{height}")
+
+        # 计算tile尺寸 (由于图像已经填充，tile尺寸自动是8的倍数)
+        tile_width = width // cols
+        tile_height = height // rows
+
+        # 验证tile尺寸确实是8的倍数
+        assert tile_width % 8 == 0 and tile_height % 8 == 0, \
+            f"Tile尺寸必须是8的倍数: {tile_width}x{tile_height}"
 
         # 检查并调整过小的tile尺寸
         if tile_width < min_tile_size or tile_height < min_tile_size:
@@ -184,42 +210,62 @@ def split_image_for_bizyair(image, max_size=1280, width_factor=None, height_fact
                 if tile_height < min_tile_size and rows > 1:
                     rows -= 1
 
-                tile_width = (width + cols - 1) // cols
-                tile_height = (height + rows - 1) // rows
-                tile_width = ensure_divisible_by_8(tile_width)
-                tile_height = ensure_divisible_by_8(tile_height)
+                # 重新计算填充和tile尺寸
+                lcm_width = cols * 8
+                lcm_height = rows * 8
+                padded_width = ((width + lcm_width - 1) // lcm_width) * lcm_width
+                padded_height = ((height + lcm_height - 1) // lcm_height) * lcm_height
+
+                # 注意: 这里不需要重新填充图像，因为之前已经填充过了
+                # 只是重新计算tile尺寸
+                tile_width = padded_width // cols
+                tile_height = padded_height // rows
 
             print(f"[split_image_for_bizyair] 调整后分割因子: 宽度分块数 {cols} x 高度分块数 {rows}")
     else:
+        # 自动计算分块数
         cols = (width + max_size - 1) // max_size
         rows = (height + max_size - 1) // max_size
         print(f"[split_image_for_bizyair] 图像尺寸超过 {max_size}x{max_size}，将分割为 {rows}x{cols} 块")
-        tile_width = ensure_divisible_by_8(max_size)
-        tile_height = ensure_divisible_by_8(max_size)
+
+        # 同样需要填充图像以确保完全覆盖
+        lcm_width = cols * 8
+        lcm_height = rows * 8
+
+        padded_width = ((width + lcm_width - 1) // lcm_width) * lcm_width
+        padded_height = ((height + lcm_height - 1) // lcm_height) * lcm_height
+
+        if padded_width != width or padded_height != height:
+            print(f"[split_image_for_bizyair] 填充图像以确保完全覆盖: {width}x{height} -> {padded_width}x{padded_height}")
+            pad_right = padded_width - width
+            pad_bottom = padded_height - height
+
+            import torch.nn.functional as F
+            image_nchw = image.permute(0, 3, 1, 2)
+            padded_nchw = F.pad(image_nchw, (0, pad_right, 0, pad_bottom), mode='reflect')
+            image = padded_nchw.permute(0, 2, 3, 1)
+            width, height = padded_width, padded_height
+            print(f"[split_image_for_bizyair] 填充完成，新尺寸: {width}x{height}")
+
+        tile_width = width // cols
+        tile_height = height // rows
 
     print(f"[split_image_for_bizyair] 最终分块尺寸: {tile_width}x{tile_height} (分块数: {cols}x{rows}={cols*rows}个)")
     tiles = []
     tile_positions = []
-    
+
     try:
         for r in range(rows):
             for c in range(cols):
-                # 最后一列/行需要延伸到图像边界
-                if c == cols - 1:
-                    # 最后一列：从边界往回推 tile_width
-                    end_x = width
-                    start_x = max(0, width - tile_width)
-                else:
-                    start_x = c * tile_width
-                    end_x = min(start_x + tile_width, width)
+                # 由于图像已填充，每个tile都是规则的网格，无需特殊处理最后一列/行
+                start_x = c * tile_width
+                end_x = start_x + tile_width
+                start_y = r * tile_height
+                end_y = start_y + tile_height
 
-                if r == rows - 1:
-                    # 最后一行：从边界往回推 tile_height
-                    end_y = height
-                    start_y = max(0, height - tile_height)
-                else:
-                    start_y = r * tile_height
-                    end_y = min(start_y + tile_height, height)
+                # 确保不超出边界 (理论上不会发生，因为图像已填充)
+                end_x = min(end_x, width)
+                end_y = min(end_y, height)
 
                 if end_y <= start_y or end_x <= start_x:
                     continue
