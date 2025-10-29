@@ -291,22 +291,25 @@ def calculate_tile_dimensions(res_width, res_height, width_factor, height_factor
 class BaseBizyAirUpscaler:
     """BizyAir图像放大处理的基类"""
 
-    def _process_single_tile_with_retry(self, tile, tile_index, total_tiles, upscale_model, model_name):
-        """处理单个图像块，包含重试机制"""
-        max_retries = 3
-        retry_delay = 1.0
+    def _process_single_tile_with_retry(self, tile, tile_index, total_tiles, upscale_model, model_name, scale_factor=4):
+        """处理单个图像块，包含改进的重试机制和降级方案"""
+        max_retries = 5  # 增加重试次数
+        base_retry_delay = 2.0  # 基础延迟增加到2秒
 
         tile_shape = tile.shape
         print(f"[并发处理] 正在处理第 {tile_index+1}/{total_tiles} 个图像块 (尺寸: {tile_shape[2]}x{tile_shape[1]})...")
 
-        upscaler = ImageUpscaleWithModel()
-        setattr(upscaler, "_assigned_id", "12345")
-
         for retry in range(max_retries):
             try:
+                # 每次重试都重新创建 upscaler 对象，避免状态污染
+                upscaler = ImageUpscaleWithModel()
+                setattr(upscaler, "_assigned_id", f"tile_{tile_index}_{retry}")
+
                 if retry > 0:
-                    print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块 - 第 {retry+1}/{max_retries} 次重试...")
-                    time.sleep(retry_delay)
+                    # 递增延迟：2秒, 3秒, 4秒, 5秒, 6秒
+                    delay = base_retry_delay + retry
+                    print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块 - 第 {retry+1}/{max_retries} 次重试 (等待{delay}秒)...")
+                    time.sleep(delay)
 
                 start_time = time.time()
 
@@ -327,10 +330,34 @@ class BaseBizyAirUpscaler:
             except Exception as e:
                 print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块第 {retry+1} 次尝试失败: {e}")
                 if retry == max_retries - 1:
-                    print(f"[并发处理] 第 {tile_index+1}/{total_tiles} 块所有重试失败，使用原始图块")
+                    # 所有重试失败，使用降级方案：torch 插值放大
+                    print(f"[并发处理] ⚠️  第 {tile_index+1}/{total_tiles} 块所有 {max_retries} 次重试失败")
+                    print(f"[并发处理] 使用降级方案: torch 插值放大 {scale_factor}x 以保持尺寸一致")
                     traceback.print_exc()
-                    return tile
 
+                    # 使用双三次插值放大到目标尺寸
+                    try:
+                        import torch.nn.functional as F
+                        # tile shape: (1, H, W, C) -> (1, C, H, W) for interpolate
+                        tile_nchw = tile.permute(0, 3, 1, 2)
+                        target_h = tile_shape[1] * scale_factor
+                        target_w = tile_shape[2] * scale_factor
+                        upscaled_nchw = F.interpolate(
+                            tile_nchw,
+                            size=(target_h, target_w),
+                            mode='bicubic',
+                            align_corners=False
+                        )
+                        # 转回 NHWC
+                        upscaled_tile = upscaled_nchw.permute(0, 2, 3, 1)
+                        print(f"[并发处理] 降级放大完成: {tile_shape[2]}x{tile_shape[1]} → {target_w}x{target_h}")
+                        return upscaled_tile
+                    except Exception as fallback_error:
+                        print(f"[并发处理] ❌ 降级方案也失败: {fallback_error}")
+                        # 最后的保底：返回原始tile的4倍放大版本（使用最简单的方法）
+                        return tile.repeat(1, scale_factor, scale_factor, 1)
+
+        # 理论上不会到这里，但保险起见
         return tile
 
     def upscale_with_bizyair(self, upscale_model, image, width_factor=None, height_factor=None, batch_size=3):
@@ -361,12 +388,15 @@ class BaseBizyAirUpscaler:
                 # 使用 ThreadPoolExecutor 进行并发处理
                 upscaled_tiles = [None] * total_tiles  # 预分配列表保持顺序
 
+                # 确定缩放因子（通常是4x）
+                scale_factor = 4
+
                 with ThreadPoolExecutor(max_workers=batch_size) as executor:
                     # 提交所有任务
                     future_to_index = {
                         executor.submit(
                             self._process_single_tile_with_retry,
-                            tile, i, total_tiles, upscale_model, model_name
+                            tile, i, total_tiles, upscale_model, model_name, scale_factor
                         ): i
                         for i, tile in enumerate(tiles)
                     }
@@ -378,7 +408,15 @@ class BaseBizyAirUpscaler:
                             upscaled_tiles[index] = future.result()
                         except Exception as e:
                             print(f"[并发处理] 第 {index+1} 块处理异常: {e}")
-                            upscaled_tiles[index] = tiles[index]  # 使用原始tile
+                            print(f"[并发处理] 使用 torch 插值作为最终降级方案")
+                            # 使用 torch 插值放大保持尺寸一致
+                            import torch.nn.functional as F
+                            tile = tiles[index]
+                            tile_nchw = tile.permute(0, 3, 1, 2)
+                            target_h = tile.shape[1] * scale_factor
+                            target_w = tile.shape[2] * scale_factor
+                            upscaled_nchw = F.interpolate(tile_nchw, size=(target_h, target_w), mode='bicubic', align_corners=False)
+                            upscaled_tiles[index] = upscaled_nchw.permute(0, 2, 3, 1)
 
                 batch_elapsed = time.time() - batch_start_time
                 print(f"所有图像块并发处理完成 (总耗时: {batch_elapsed:.2f}秒, 平均: {batch_elapsed/total_tiles:.2f}秒/块)...")
@@ -399,7 +437,8 @@ class BaseBizyAirUpscaler:
             # 小图像直接处理
             else:
                 print(f"[upscale_with_bizyair] 图像小于 {max_size}，直接处理")
-                upscaled_img = self._process_single_tile_with_retry(image, 0, 1, upscale_model, model_name)
+                scale_factor = 4  # 默认4x放大
+                upscaled_img = self._process_single_tile_with_retry(image, 0, 1, upscale_model, model_name, scale_factor)
                 print(f"[upscale_with_bizyair] 上采样完成，返回结果")
                 return upscaled_img
 
